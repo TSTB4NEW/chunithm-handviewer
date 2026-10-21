@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHUNITHM · TASOLLER VIEWER</title>
+<style>
+  :root{ --line:rgba(255,255,255,.08); --txt:#e9edf5; --dim:rgba(233,237,245,.45); --accent:#5fe3ff; }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:transparent;overflow:hidden}
+  body{font-family:"Inter","Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--txt);display:flex;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
+  body.bg{background:radial-gradient(1200px 600px at 50% 110%,#12161d 0%,#07090d 60%,#040507 100%)}
+  body.anchor-bottom{align-items:flex-end;padding-bottom:4vh}
+  #root{width:min(100vw,1560px);padding:clamp(8px,1.2vw,20px) clamp(10px,1.6vw,26px);position:relative}
+
+  .hud{display:flex;justify-content:space-between;align-items:center;margin:0 8px 10px;
+    font-size:clamp(9px,1vw,12px);letter-spacing:.14em}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:600;opacity:.92}
+  .brand b{font-weight:800;letter-spacing:.16em}
+  .brand .led{width:6px;height:6px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 10px var(--accent);animation:blink 2.4s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+  .meta{display:flex;gap:8px}
+  .chip{padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.035);
+    color:var(--dim);font-size:clamp(9px,.85vw,11px);display:inline-flex;align-items:center;gap:6px;
+    white-space:nowrap;letter-spacing:.06em}
+  .chip.ok{color:#8ff0cf;border-color:rgba(143,240,207,.28);background:rgba(143,240,207,.07)}
+  .chip.warn{color:#ffcf7a;border-color:rgba(255,207,122,.28);background:rgba(255,207,122,.07)}
+  .chip.ghost{opacity:.6}
+
+  .device{position:relative;border-radius:16px;padding:clamp(10px,1.4vw,18px);
+    background:linear-gradient(180deg,rgba(59,62,68,.85),rgba(35,37,41,.85) 60%,rgba(26,28,32,.85));
+    border:1px solid rgba(255,255,255,.14);
+    box-shadow:0 28px 50px -28px rgba(0,0,0,.95),inset 0 1px 0 rgba(255,255,255,.18)}
+  .surface{position:relative;border-radius:8px;padding:clamp(5px,.7vw,9px);
+    background:rgba(8,10,14,.45);box-shadow:inset 0 3px 12px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.05)}
+
+  .panel{display:grid;align-items:stretch}
+  .sep{background:#000;align-self:stretch;opacity:.82}
+  .col{display:flex;flex-direction:column;gap:0;min-width:0;height:auto}
+  .half{position:relative;flex:1;border-radius:0;
+    background-color:color-mix(in srgb, var(--color,#1b1f27) 82%, transparent);
+    background-image:
+      repeating-linear-gradient(45deg,rgba(255,255,255,.10) 0 3px,rgba(255,255,255,.02) 3px 7px),
+      linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 46%);
+    background-size:100% 100%;background-repeat:no-repeat;
+    box-shadow:none}
+  .half .press{position:absolute;left:0;right:0;bottom:0;height:var(--pp,0%);background:rgba(255,255,255,.55)}
+  .half.on{box-shadow:inset 0 0 0 2px rgba(255,255,255,.55),inset 0 0 18px rgba(255,255,255,.15)}
+  .half .num{position:absolute;right:3px;top:2px;font-size:9px;font-weight:600;
+    font-variant-numeric:tabular-nums;opacity:0;pointer-events:none;color:rgba(255,255,255,.7)}
+  body.shownum .half .num{opacity:.85}
+
+    border-color:rgba(255,255,255,.2)}
+    box-shadow:inset 0 2px 8px rgba(120,100,60,.35),0 0 0 1px rgba(0,0,0,.15)}
+    background-image:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 40%);
+    box-shadow:inset 0 0 0 1px rgba(190,170,120,.35)}
+
+      repeating-linear-gradient(45deg,rgba(255,255,255,.12) 0 3px,rgba(255,255,255,.03) 3px 7px),
+      linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 46%)}
+
+      repeating-linear-gradient(45deg,rgba(255,255,255,.22) 0 12px,transparent 12px 24px),
+      linear-gradient(180deg,#ffe45c,#ffd12e 40%,#f7b500);border-color:#c98f00}
+
+  #gear{position:fixed;right:14px;bottom:14px;width:38px;height:38px;border-radius:8px;
+    border:1px solid var(--line);background:rgba(15,18,24,.8);color:var(--txt);font-size:15px;
+    cursor:pointer;opacity:.3;transition:.2s;z-index:30}
+  #gear:hover{opacity:1}
+  #panel{position:fixed;right:14px;bottom:62px;width:318px;max-height:80vh;overflow:auto;
+    background:rgba(12,15,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:12px;
+    padding:16px;box-shadow:0 24px 60px rgba(0,0,0,.75);font-size:12px;z-index:40;display:none}
+  #panel.open{display:block}
+  #panel h3{margin:0 0 12px;font-size:11px;letter-spacing:.2em;color:var(--dim);font-weight:600}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;
+    border-bottom:1px solid rgba(255,255,255,.05)}
+  .row:last-child{border-bottom:none}
+  select{background:#10141a;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px}
+  input[type=range]{width:140px;accent-color:#5fe3ff}
+  .btn{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--txt);
+    border-radius:7px;padding:7px 12px;font-size:12px;cursor:pointer}
+  .btn:hover{background:rgba(255,255,255,.12)}
+  .btn.danger{color:#ff9aa2;border-color:rgba(255,120,130,.3)}
+  .val{color:var(--accent);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+  body.obs{align-items:flex-start;justify-content:flex-start;padding:0}
+  body.obs #root{width:100vw;padding:0}
+  body.stale .device{opacity:.5}
+  @media (max-width:700px){.hud{font-size:9px}.chip{padding:3px 8px}}
+</style>
+</head>
+<body>
+<div id="root" class="theme-matte">
+  <div class="hud" id="hud">
+    <div class="brand"><span class="led"></span>CHUNITHM <b>TOUCH VIEWER</b></div>
+    <div class="meta"><span id="src" class="chip">未连接</span><span id="hz" class="chip ghost">0 Hz</span></div>
+  </div>
+
+  <div class="device">
+    <div class="surface">
+      <div class="panel" id="panelBody"></div>
+    </div>
+  </div>
+</div>
+
+<button id="gear" title="设置">⚙</button>
+<div id="panel">
+  <h3>VIEWER 设置</h3>
+  <div class="row"><label>触发阈值</label><input type="range" id="optThr" min="1" max="160" step="1"><span class="val" id="thrVal">20</span></div>
+  <div class="row"><label>显示压力数值</label><input type="checkbox" id="optNum"></div>
+  <div class="row"><label>LED 颜色顺序</label>
+    <select id="optOrder"><option value="RGB">RGB</option><option value="RBG">RBG</option>
+      <option value="GRB">GRB</option><option value="GBR">GBR</option><option value="BRG">BRG</option><option value="BGR">BGR</option></select>
+  </div>
+  <div class="row"><label>LED 反色</label><input type="checkbox" id="optInv"></div>
+  <div class="row"><label>背景</label><input type="checkbox" id="optBg"></div>
+  <div class="row"><label>关闭 viewer</label><button class="btn danger" id="btnQuit">退出程序</button></div>
+</div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const params = new URLSearchParams(location.search);
+  const LS = 'chunithm-handviewer-v4';
+
+  if (params.has('reset')) { try { localStorage.removeItem(LS); } catch (e) {} }
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(LS) || '{}') || {}; } catch (e) { saved = {}; }
+  const cfg = Object.assign({ thr: 20, num: false, bg: false, order: 'RGB', invert: false }, saved);
+
+  if (params.has('thr') && isFinite(+params.get('thr'))) cfg.thr = Math.max(1, Math.min(160, +params.get('thr')));
+  if (params.has('num')) cfg.num = params.get('num') !== '0';
+  if (params.has('bg')) cfg.bg = params.get('bg') !== '0';
+  if (params.has('order')) cfg.order = params.get('order');
+  if (params.has('invert')) cfg.invert = params.get('invert') !== '0';
+  if (!isFinite(cfg.thr)) cfg.thr = 20;
+  if (params.get('anchor') === 'bottom') document.body.classList.add('anchor-bottom');
+  if (params.get('ui') === '0') { document.body.classList.add('obs'); $('#gear').style.display = 'none'; $('#hud').style.display = 'none'; }
+
+  const body = $('#panelBody');
+  const cols = [];
+  const OFF_COLOR = '#e9e2c7';
+
+  for (let j = 0; j < 16; j++) {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const h0 = document.createElement('div'); h0.className = 'half';
+    h0.innerHTML = '<span class="press"></span><span class="num">0</span>';
+    const h1 = document.createElement('div'); h1.className = 'half';
+    h1.innerHTML = '<span class="press"></span><span class="num">0</span>';
+    col.appendChild(h0); col.appendChild(h1);
+    body.appendChild(col);
+    let sep = null;
+    if (j < 15) { sep = document.createElement('i'); sep.className = 'sep'; body.appendChild(sep); }
+    cols.push({ sep, col, h: [h0, h1] });
+  }
+
+  let state = { cells: new Array(32).fill(0), air: new Array(6).fill(0), led: new Array(32).fill(0), src: 0 };
+  let ws = null, got = 0, msgCount = 0, lastMsg = 0;
+
+  function connect() {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
+    ws.onmessage = ev => {
+      try { state = JSON.parse(ev.data); msgCount++; lastMsg = Date.now(); updateChips(); } catch (e) {}
+    };
+    ws.onclose = () => { ws = null; setTimeout(connect, 300); };
+    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  }
+
+  let lastSrcTxt = '';
+  function updateChips() {
+    const src = $('#src');
+    let txt = '未连接', cls = 'chip';
+    if (state.src === 1) { txt = 'TASOLLER · HID'; cls = 'chip ok'; }
+    else if (state.src === 2) { txt = 'TASOLLER · 共享内存'; cls = 'chip ok'; }
+    else if (state.src === 4) { txt = 'TASOLLER · WinUSB'; cls = 'chip ok'; }
+    else if (state.src === 5) { txt = 'CHUNITHM · 游戏进程'; cls = 'chip ok'; }
+    else if (state.src === 3) { txt = '演示模式'; cls = 'chip warn'; }
+    if (txt !== lastSrcTxt) { src.textContent = txt; src.className = cls; lastSrcTxt = txt; }
+  }
+
+  function colorFor(idx, j) {
+    const lit = state.ledValid && state.led;
+    if (!lit) return 'hsl(' + (182 + 130 * j / 15).toFixed(1) + ' 70% 62%)';
+    const rgb = state.led[idx] | 0;
+    const t = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255];
+    const ord = /^[RGB]{3}$/.test(cfg.order) ? cfg.order : 'RGB';
+    const mi = { R: ord.indexOf('R'), G: ord.indexOf('G'), B: ord.indexOf('B') };
+    let cr = t[mi.R], cg = t[mi.G], cb = t[mi.B];
+    if (cfg.invert) { cr = 255 - cr; cg = 255 - cg; cb = 255 - cb; }
+    return 'rgb(' + cr + ',' + cg + ',' + cb + ')';
+  }
+
+  function render() {
+    for (let j = 0; j < 16; j++) {
+      const c = cols[j];
+      const base = (15 - j) * 2;
+      c.col.style.setProperty('--color', colorFor(base, j));
+      if (c.sep) {
+        const sepColor = colorFor(Math.max(0, base - 1), j);
+        if (c.sep.dataset.c !== sepColor) {
+          c.sep.style.background = sepColor;
+          c.sep.dataset.c = sepColor;
+        }
+      }
+      for (let h = 0; h < 2; h++) {
+        const i = j * 2 + h;
+        const v = state.cells[i] || 0;
+        const el = c.h[h];
+        el.style.setProperty('--pp', (Math.min(1, v / 255) * 100).toFixed(1) + '%');
+        el.classList.toggle('on', v >= cfg.thr);
+        el.querySelector('.num').textContent = v;
+      }
+    }
+    const hz = $('#hz'); if (hz) hz.textContent = got + ' Hz';
+    document.body.classList.toggle('stale', lastMsg > 0 && Date.now() - lastMsg > 2000);
+    requestAnimationFrame(render);
+  }
+  setInterval(() => { got = msgCount; msgCount = 0; }, 1000);
+
+  function applyCfg() {
+    document.querySelector('#root').className = 'theme-matte';
+    document.body.classList.toggle('bg', cfg.bg);
+    document.body.classList.toggle('shownum', cfg.num);
+    $('#optThr').value = cfg.thr;
+    $('#thrVal').textContent = cfg.thr;
+    $('#optNum').checked = cfg.num;
+    $('#optOrder').value = cfg.order;
+    $('#optInv').checked = cfg.invert;
+    $('#optBg').checked = cfg.bg;
+    localStorage.setItem(LS, JSON.stringify(cfg));
+  }
+  $('#optThr').oninput = e => { cfg.thr = +e.target.value; applyCfg(); };
+  $('#optNum').onchange = e => { cfg.num = e.target.checked; applyCfg(); };
+  $('#optOrder').onchange = e => { cfg.order = e.target.value; applyCfg(); };
+  $('#optInv').onchange = e => { cfg.invert = e.target.checked; applyCfg(); };
+  $('#optBg').onchange = e => { cfg.bg = e.target.checked; applyCfg(); };
+  $('#gear').onclick = () => $('#panel').classList.toggle('open');
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#panel').classList.remove('open'); });
+  $('#btnQuit').onclick = async () => {
+    if (!confirm('确定关闭 viewer 程序？')) return;
+    try { await fetch('/quit', { method: 'POST' }); } catch (e) {}
+    document.body.innerHTML = '<div style="color:#889;font:13px sans-serif;text-align:center;padding-top:40vh">viewer 已退出</div>';
+  };
+
+  // column : LED strip = 25 : 3
+  body.style.gridTemplateColumns = Array.from({ length: 16 }, (_, j) => j < 15 ? '25fr 3fr' : '25fr').join(' ');
+
+  function layout(){
+    const w = cols[0].col.getBoundingClientRect().width;
+    if (w > 0) cols.forEach(c => { c.col.style.height = Math.round(w * 4) + 'px'; });
+  }
+  window.addEventListener('resize', layout);
+
+  applyCfg();
+  layout();
+  connect();
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
