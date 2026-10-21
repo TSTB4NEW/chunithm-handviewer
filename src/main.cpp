@@ -26,6 +26,12 @@
 #include <vector>
 #include <algorithm>
 
+// ---------------------------------------------------------------- version ---
+// Bumped with the tag in README.md. The build counter is appended to the viewer
+// URL so a new exe never leaves a stale page cached in the browser profile.
+#define HV_VERSION "0.1.1"
+static const char* kVersion = HV_VERSION " b" __DATE__ " " __TIME__;
+
 // ---------------------------------------------------------------- logging ---
 static std::mutex g_logMu;
 static std::wstring g_exeDir;
@@ -188,13 +194,21 @@ static std::string WideToUtf8(const std::wstring& w) {
 }
 
 // Virtual-key token: "S" | "0x53" | "83" | "SPACE" | "LEFT"
+//
+// Virtual-key codes overlap the ASCII range (VK_TAB = 9, VK_RETURN = 13,
+// VK_ESCAPE = 27, ...), so a named token must win over the "small decimal
+// number" interpretation or "enter" would be read as VK code 13 <=> nothing.
 static int ParseVk(const std::string& tok) {
     if (tok.empty()) return 0;
     static const std::map<std::string, int> named = {
         {"SPACE", VK_SPACE}, {"LEFT", VK_LEFT}, {"RIGHT", VK_RIGHT}, {"UP", VK_UP}, {"DOWN", VK_DOWN},
         {"SHIFT", VK_SHIFT}, {"CTRL", VK_CONTROL}, {"ALT", VK_MENU}, {"ENTER", VK_RETURN},
-        {"TAB", VK_TAB}, {"ESC", VK_ESCAPE}, {"BACKSPACE", VK_BACK}, {"SEMI", VK_OEM_1},
-        {"COMMA", VK_OEM_COMMA}, {"PERIOD", VK_OEM_PERIOD}, {"SLASH", VK_OEM_2},
+        {"RETURN", VK_RETURN}, {"TAB", VK_TAB}, {"ESC", VK_ESCAPE}, {"ESCAPE", VK_ESCAPE},
+        {"BACKSPACE", VK_BACK}, {"BACK", VK_BACK}, {"DELETE", VK_DELETE}, {"INSERT", VK_INSERT},
+        {"HOME", VK_HOME}, {"END", VK_END}, {"PGUP", VK_PRIOR}, {"PAGEDOWN", VK_NEXT},
+        {"CAPSLOCK", VK_CAPITAL}, {"LSHIFT", VK_LSHIFT}, {"RSHIFT", VK_RSHIFT},
+        {"LCTRL", VK_LCONTROL}, {"RCTRL", VK_RCONTROL}, {"LALT", VK_LMENU}, {"RALT", VK_RMENU},
+        {"SEMI", VK_OEM_1}, {"COMMA", VK_OEM_COMMA}, {"PERIOD", VK_OEM_PERIOD}, {"SLASH", VK_OEM_2},
         {"LBRACKET", VK_OEM_4}, {"RBRACKET", VK_OEM_6}, {"BACKSLASH", VK_OEM_5},
         {"MINUS", VK_OEM_MINUS}, {"EQUALS", VK_OEM_PLUS}, {"TILDE", VK_OEM_3},
     };
@@ -308,7 +322,7 @@ static void LoadConfig() {
 static void SaveConfig() {
     std::ofstream f(g_iniPath);
     if (!f) { Log("cannot write config"); return; }
-    f << "; chunithm-handviewer\n";
+    f << "; chunithm-handviewer " HV_VERSION "\n";
     f << "[general]\n";
     f << "port=" << (g_cliPort ? g_iniPort : g_cfg.port) << "\n";
     f << "open_browser=" << (g_cfg.openBrowser ? 1 : 0) << "\n";
@@ -338,6 +352,8 @@ static std::atomic<bool> g_hidFn[2];
 static std::atomic<bool> g_kbCell[32];
 static std::atomic<bool> g_kbAir[6];
 static std::atomic<bool> g_kbFn[2];
+// True while any bound keyboard slot is held down (refreshed by KeyboardThread).
+static std::atomic<bool> g_kbAny{false};
 static std::atomic<int> g_srcHid{0};  // 0 none, 1 hid, 2 shmem, 3 demo
 static std::atomic<bool> g_kbAlive{false};
 static std::mutex g_hidDevMu;
@@ -399,19 +415,18 @@ static void ApplyReport(const uint8_t* b, size_t n) {
         g_hidP[2 * k + 1].store(b[off + 4 + 2 * (15 - k) + 1], std::memory_order_relaxed);
     }
 }
-// "DL" + 0x02, then 32 x {G,B,R}; the driver writes this packet to pipe 0x03.
+// "DL" + 0x02, then 32 x 3 colour bytes; the driver writes this packet to pipe
+// 0x03. Wire order is preserved verbatim: LED index i is frame index i, and the
+// page maps the three bytes -> R/G/B through its "LED 颜色顺序" setting (and
+// "LED 反色"), so a byte-order or direction fix belongs in that setting, not here.
 static void ApplyLed(const uint8_t* p, size_t n) {
     if (n < 99) return;
     if (p[0] != 0x44 || p[1] != 0x4c || p[2] != 0x02) return;
     bool any = false;
     for (int i = 0; i < 32; i++) {
-        // LED frames are right-to-left like the touch sensors, and the driver
-        // writes {G,R,B} from a BGR source; map both back to display order.
-        int src = i;  // LED frames already come left-to-right
-        uint8_t b0 = p[3 + src * 3 + 0];
-        uint8_t b1 = p[3 + src * 3 + 1];
-        uint8_t b2 = p[3 + src * 3 + 2];
-        // Keep the wire order; the page maps bytes -> R/G/B (configurable).
+        uint8_t b0 = p[3 + i * 3 + 0];
+        uint8_t b1 = p[3 + i * 3 + 1];
+        uint8_t b2 = p[3 + i * 3 + 2];
         g_led[i].store(((uint32_t)b0 << 16) | ((uint32_t)b1 << 8) | b2, std::memory_order_relaxed);
         if (b0 || b1 || b2) any = true;
     }
@@ -419,6 +434,31 @@ static void ApplyLed(const uint8_t* p, size_t n) {
 }
 
 // --- keyboard polling ---
+// A slot with VK 0 has no key bound: it exists so AIR / FN rows can be shown in
+// the same 32-slot editor as the cells. Slots whose VK happens to sit inside the
+// printable ASCII range (VK_TAB, VK_RETURN, VK_ESCAPE, ...) must still be
+// treated as bound, otherwise those keys could never drive anything.
+static inline bool KeyBound(int vk) { return vk > 0 && vk < 256; }
+
+// VK code -> token the ini / web editor understands.
+static std::string VkToken(int vk) {
+    if (!vk) return "";
+    static const std::pair<int, const char*> names[] = {
+        {VK_SPACE, "SPACE"}, {VK_LEFT, "LEFT"}, {VK_RIGHT, "RIGHT"}, {VK_UP, "UP"}, {VK_DOWN, "DOWN"},
+        {VK_SHIFT, "SHIFT"}, {VK_CONTROL, "CTRL"}, {VK_MENU, "ALT"}, {VK_RETURN, "ENTER"},
+        {VK_TAB, "TAB"}, {VK_ESCAPE, "ESC"}, {VK_BACK, "BACKSPACE"}, {VK_OEM_1, ";"},
+        {VK_OEM_COMMA, ","}, {VK_OEM_PERIOD, "."}, {VK_OEM_2, "/"}, {VK_OEM_4, "["},
+        {VK_OEM_6, "]"}, {VK_OEM_5, "\\"}, {VK_OEM_MINUS, "-"}, {VK_OEM_PLUS, "="}, {VK_OEM_3, "`"},
+    };
+    if (vk >= 'A' && vk <= 'Z') return std::string(1, (char)vk);
+    if (vk >= '0' && vk <= '9') return std::string(1, (char)vk);
+    for (auto& n : names) if (n.first == vk) return n.second;
+    char b[16];
+    if (vk >= VK_F1 && vk <= VK_F24) { sprintf(b, "F%d", vk - VK_F1 + 1); return b; }
+    sprintf(b, "0x%02X", vk);
+    return b;
+}
+
 static void KeyboardThread() {
     // initialise atomics
     for (int i = 0; i < 32; i++) g_kbCell[i].store(false);
@@ -439,17 +479,22 @@ static void KeyboardThread() {
             for (int i = 0; i < 2; i++) { lastFn[i] = 0; g_kbFn[i].store(false); }
         }
         for (int i = 0; i < 32; i++) {
-            bool down = cell[i] && (GetAsyncKeyState(cell[i]) & 0x8000) != 0;
+            bool down = KeyBound(cell[i]) && (GetAsyncKeyState(cell[i]) & 0x8000) != 0;
             if (down != (bool)lastCell[i]) { lastCell[i] = down; g_kbCell[i].store(down, std::memory_order_relaxed); }
         }
         for (int i = 0; i < 6; i++) {
-            bool down = air[i] && (GetAsyncKeyState(air[i]) & 0x8000) != 0;
+            bool down = KeyBound(air[i]) && (GetAsyncKeyState(air[i]) & 0x8000) != 0;
             if (down != lastAir[i]) { lastAir[i] = down; g_kbAir[i].store(down, std::memory_order_relaxed); }
         }
         for (int i = 0; i < 2; i++) {
-            bool down = fn[i] && (GetAsyncKeyState(fn[i]) & 0x8000) != 0;
+            bool down = KeyBound(fn[i]) && (GetAsyncKeyState(fn[i]) & 0x8000) != 0;
             if (down != lastFn[i]) { lastFn[i] = down; g_kbFn[i].store(down, std::memory_order_relaxed); }
         }
+        bool any = false;
+        for (int i = 0; i < 32 && !any; i++) any = g_kbCell[i].load(std::memory_order_relaxed);
+        for (int i = 0; i < 6 && !any; i++) any = g_kbAir[i].load(std::memory_order_relaxed);
+        for (int i = 0; i < 2 && !any; i++) any = g_kbFn[i].load(std::memory_order_relaxed);
+        g_kbAny.store(any, std::memory_order_relaxed);
         Sleep(1);
     }
 }
@@ -677,15 +722,24 @@ struct Snapshot {
     std::string dev;
 };
 
+// Pressure a bound keyboard key reports. The page paints the cell at value/255
+// and lights it at v >= threshold (default 20), so this reads as a firm press
+// while "hold" keys in raw HID mode cannot lower an analogue reading.
+static const uint8_t kKbPressure = 255;
+
 static Snapshot TakeSnapshot() {
     Snapshot s{};
     for (int i = 0; i < 32; i++) {
-        s.cells[i] = g_hidP[i].load(std::memory_order_relaxed);
+        uint8_t p = g_hidP[i].load(std::memory_order_relaxed);
+        if (g_kbCell[i].load(std::memory_order_relaxed) && p < kKbPressure) p = kKbPressure;
+        s.cells[i] = p;
     }
-    for (int i = 0; i < 6; i++) s.air[i] = g_air[i].load();
-    for (int i = 0; i < 2; i++) s.fn[i] = g_hidFn[i].load();
+    for (int i = 0; i < 6; i++) s.air[i] = g_air[i].load() || g_kbAir[i].load();
+    for (int i = 0; i < 2; i++) s.fn[i] = g_hidFn[i].load() || g_kbFn[i].load();
     s.src = g_srcHid.load();
-    s.kb = false;
+    // A bound key is down right now (cells/air/fn above may already be covered by
+    // the panel's own reading, so this is tracked separately).
+    s.kb = g_kbAny.load();
     s.ledValid = g_ledSeen.load();
     for (int i = 0; i < 32; i++) s.led[i] = g_led[i].load(std::memory_order_relaxed);
     s.dev = GetHidName();
@@ -703,7 +757,7 @@ static std::string JsonEscape(const std::string& s) {
 }
 
 static std::string SnapshotJson(const Snapshot& s, bool withKeys) {
-    std::string j = "{\"v\":1,\"src\":";
+    std::string j = "{\"v\":1,\"ver\":\"" HV_VERSION "\",\"src\":";
     j += std::to_string(s.src);
     j += ",\"kb\":";
     j += s.kb ? "1" : "0";
@@ -727,7 +781,23 @@ static std::string SnapshotJson(const Snapshot& s, bool withKeys) {
             for (size_t i = 0; i < g_vkAir.size(); i++) { if (i) j += ','; j += std::to_string(g_vkAir[i]); }
             j += "],\"fn\":[";
             for (size_t i = 0; i < g_vkFn.size(); i++) { if (i) j += ','; j += std::to_string(g_vkFn[i]); }
+            j += "],\"labels\":{\"cells\":[";
+            for (size_t i = 0; i < g_vkCell.size(); i++) {
+                if (i) j += ',';
+                j += '"' + JsonEscape(VkToken(g_vkCell[i])) + '"';
+            }
+            j += "],\"air\":[";
+            for (size_t i = 0; i < g_vkAir.size(); i++) {
+                if (i) j += ',';
+                j += '"' + JsonEscape(VkToken(g_vkAir[i])) + '"';
+            }
+            j += "],\"fn\":[";
+            for (size_t i = 0; i < g_vkFn.size(); i++) {
+                if (i) j += ',';
+                j += '"' + JsonEscape(VkToken(g_vkFn[i])) + '"';
+            }
             j += "]}";
+            j += "}";  // close "keys"
         }
     }
     j += "}";
@@ -948,16 +1018,20 @@ static void HandleConn(SOCKET c) {
         return;
     }
     if (path == "/bind") {
+        // slot=cell0..cell31|air0..air5|fn0..fn1
+        // key=<token> (A, 1, SPACE, ENTER, LEFT, F1 ...) or vk=<decimal VK>
         auto q = ParseQuery(query);
         std::string slot = q["slot"];
         long vk = 0;
-        bool ok = ParseInt(q["vk"], vk) && vk > 0 && vk < 256;
+        bool ok = false;
+        if (!q["key"].empty()) { vk = ParseVk(q["key"]); ok = vk > 0 && vk < 256; }
+        else if (ParseInt(q["vk"], vk)) ok = vk > 0 && vk < 256;
         int idx = -1, kind = 0;
         if (ok) {
             if (slot.rfind("cell", 0) == 0) { kind = 0; idx = atoi(slot.c_str() + 4); }
             else if (slot.rfind("air", 0) == 0) { kind = 1; idx = atoi(slot.c_str() + 3); }
             else if (slot.rfind("fn", 0) == 0) { kind = 2; idx = atoi(slot.c_str() + 2); }
-            ok = idx >= 0 && idx < (kind == 0 ? 32 : kind == 1 ? 6 : 2) && !q["vk"].empty();
+            ok = idx >= 0 && idx < (kind == 0 ? 32 : kind == 1 ? 6 : 2);
         }
         if (ok) {
             {
@@ -971,6 +1045,7 @@ static void HandleConn(SOCKET c) {
                 g_keyGen.fetch_add(1);
             }
             SaveConfig();
+            Log("bind: %s -> %s (vk %ld)", slot.c_str(), q["key"].empty() ? "vk" : q["key"].c_str(), vk);
         }
         const char* body = ok ? "{\"ok\":true}" : "{\"ok\":false}";
         char hdr[256];
@@ -1123,6 +1198,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         f = freopen("CONOUT$", "w", stderr);
     }
     Log("---- start (pid %lu) ----", GetCurrentProcessId());
+    Log("version %s", kVersion);
 
     // Name the guard after the port: an instance left running on another port must
     // never stop a new one from starting.
@@ -1132,7 +1208,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (once && GetLastError() == ERROR_ALREADY_EXISTS) {
         Log("another instance already serves port %d, opening it", g_cfg.port);
         wchar_t url[256];
-        swprintf(url, 256, L"http://127.0.0.1:%d/?v=193", g_cfg.port);
+        swprintf(url, 256, L"http://127.0.0.1:%d/?v=" L"" HV_VERSION, g_cfg.port);
         LaunchViewer(url);
         return 0;
     }
@@ -1141,6 +1217,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     for (int i = 0; i < 32; i++) { g_hidP[i].store(0); g_kbCell[i].store(false); }
     for (int i = 0; i < 6; i++) { g_air[i].store(false); g_kbAir[i].store(false); }
     for (int i = 0; i < 2; i++) { g_hidFn[i].store(false); g_kbFn[i].store(false); }
+    g_kbAny.store(false);
 
     {
         std::lock_guard<std::mutex> lk(g_vkMu);
@@ -1175,9 +1252,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     else {
         if (g_cfg.hid) std::thread(HidThread).detach();
     }
+    // The board is merged into whatever source is active (game memory, WinUSB,
+    // HID, shared memory or demo), so it runs independently of the device loop.
+    if (g_cfg.keyboard) {
+        std::thread(KeyboardThread).detach();
+        std::lock_guard<std::mutex> lk(g_vkMu);
+        Log("keyboard: polling [%s]", FormatVkList(g_vkCell).c_str());
+    }
 
     wchar_t url[256];
-    swprintf(url, 256, L"http://127.0.0.1:%d/?v=193", g_cfg.port);
+    swprintf(url, 256, L"http://127.0.0.1:%d/?v=" L"" HV_VERSION, g_cfg.port);
     if (g_cfg.openBrowser && !noBrowser && !demo) {
         if (!LaunchViewer(url)) {
             std::wstring msg = L"无法自动打开浏览器。请手动打开：";

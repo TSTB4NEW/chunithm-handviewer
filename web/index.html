@@ -37,7 +37,7 @@
     background:rgba(8,10,14,.45);box-shadow:inset 0 3px 12px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.05)}
 
   .panel{display:grid;align-items:stretch}
-  .sep{background:#000;align-self:stretch;opacity:.82}
+  .sep{align-self:stretch;opacity:.82;background-color:color-mix(in srgb,var(--color,#1b1f27) 82%,transparent)}
   .col{display:flex;flex-direction:column;gap:0;min-width:0;height:auto}
   .half{position:relative;flex:1;border-radius:0;
     background-color:color-mix(in srgb, var(--color,#1b1f27) 82%, transparent);
@@ -48,20 +48,11 @@
     box-shadow:none}
   .half .press{position:absolute;left:0;right:0;bottom:0;height:var(--pp,0%);background:rgba(255,255,255,.55)}
   .half.on{box-shadow:inset 0 0 0 2px rgba(255,255,255,.55),inset 0 0 18px rgba(255,255,255,.15)}
+  .half.sel{box-shadow:inset 0 0 0 2px var(--accent),inset 0 0 22px rgba(95,227,255,.28)}
+  body.editing .half{cursor:pointer}
   .half .num{position:absolute;right:3px;top:2px;font-size:9px;font-weight:600;
     font-variant-numeric:tabular-nums;opacity:0;pointer-events:none;color:rgba(255,255,255,.7)}
   body.shownum .half .num{opacity:.85}
-
-    border-color:rgba(255,255,255,.2)}
-    box-shadow:inset 0 2px 8px rgba(120,100,60,.35),0 0 0 1px rgba(0,0,0,.15)}
-    background-image:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 40%);
-    box-shadow:inset 0 0 0 1px rgba(190,170,120,.35)}
-
-      repeating-linear-gradient(45deg,rgba(255,255,255,.12) 0 3px,rgba(255,255,255,.03) 3px 7px),
-      linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 46%)}
-
-      repeating-linear-gradient(45deg,rgba(255,255,255,.22) 0 12px,transparent 12px 24px),
-      linear-gradient(180deg,#ffe45c,#ffd12e 40%,#f7b500);border-color:#c98f00}
 
   #gear{position:fixed;right:14px;bottom:14px;width:38px;height:38px;border-radius:8px;
     border:1px solid var(--line);background:rgba(15,18,24,.8);color:var(--txt);font-size:15px;
@@ -82,6 +73,15 @@
   .btn:hover{background:rgba(255,255,255,.12)}
   .btn.danger{color:#ff9aa2;border-color:rgba(255,120,130,.3)}
   .val{color:var(--accent);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+  .hint{color:var(--dim);font-size:11px;padding:6px 0 2px;line-height:1.5}
+  .bindlist{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;padding:6px 0 2px}
+  .bind{font-size:10px;padding:3px 0;border-radius:4px;border:1px solid var(--line);
+    background:rgba(255,255,255,.03);color:var(--dim);cursor:pointer;text-align:center;overflow:hidden;white-space:nowrap}
+  .bind.sel{border-color:var(--accent);color:var(--accent);background:rgba(95,227,255,.12)}
+  .bind.down{border-color:#8ff0cf;color:#8ff0cf;background:rgba(143,240,207,.16)}
+  .half .key{position:absolute;left:0;right:0;top:0;text-align:center;font-size:9px;font-weight:700;
+    letter-spacing:.04em;opacity:0;pointer-events:none;color:rgba(255,255,255,.9);text-shadow:0 1px 2px rgba(0,0,0,.7)}
+  body.shownum .half .key{opacity:.55}
   body.obs{align-items:flex-start;justify-content:flex-start;padding:0}
   body.obs #root{width:100vw;padding:0}
   body.stale .device{opacity:.5}
@@ -92,7 +92,7 @@
 <div id="root" class="theme-matte">
   <div class="hud" id="hud">
     <div class="brand"><span class="led"></span>CHUNITHM <b>TOUCH VIEWER</b></div>
-    <div class="meta"><span id="src" class="chip">未连接</span><span id="hz" class="chip ghost">0 Hz</span></div>
+    <div class="meta"><span id="src" class="chip">未连接</span><span id="kbChip" class="chip ghost">⌨ 待机</span><span id="hz" class="chip ghost">0 Hz</span></div>
   </div>
 
   <div class="device">
@@ -113,6 +113,9 @@
   </div>
   <div class="row"><label>LED 反色</label><input type="checkbox" id="optInv"></div>
   <div class="row"><label>背景</label><input type="checkbox" id="optBg"></div>
+  <div class="row"><label>重新绑定按键</label><button class="btn" id="btnBind">点格子再按键</button></div>
+  <div class="hint" id="bindHint">绑定中的格子：无</div>
+  <div class="bindlist" id="bindList"></div>
   <div class="row"><label>关闭 viewer</label><button class="btn danger" id="btnQuit">退出程序</button></div>
 </div>
 
@@ -144,9 +147,9 @@
     const col = document.createElement('div');
     col.className = 'col';
     const h0 = document.createElement('div'); h0.className = 'half';
-    h0.innerHTML = '<span class="press"></span><span class="num">0</span>';
+    h0.innerHTML = '<span class="press"></span><span class="num">0</span><span class="key"></span>';
     const h1 = document.createElement('div'); h1.className = 'half';
-    h1.innerHTML = '<span class="press"></span><span class="num">0</span>';
+    h1.innerHTML = '<span class="press"></span><span class="num">0</span><span class="key"></span>';
     col.appendChild(h0); col.appendChild(h1);
     body.appendChild(col);
     let sep = null;
@@ -154,17 +157,119 @@
     cols.push({ sep, col, h: [h0, h1] });
   }
 
-  let state = { cells: new Array(32).fill(0), air: new Array(6).fill(0), led: new Array(32).fill(0), src: 0 };
+  let state = { cells: new Array(32).fill(0), air: new Array(6).fill(0), led: new Array(32).fill(0), src: 0, kb: 0 };
+  let keys = { labels: { cells: new Array(32).fill(''), air: new Array(6).fill(''), fn: [] } };
+  // Editor slot: {kind:0|1|2, idx}. Persisted in localStorage so reloads keep it.
+  let bindTarget = null;
+  try {
+    const bt = JSON.parse(localStorage.getItem(LS + '-bind') || 'null');
+    if (bt && typeof bt.idx === 'number' && bt.kind >= 0 && bt.kind <= 2) bindTarget = bt;
+  } catch (e) {}
   let ws = null, got = 0, msgCount = 0, lastMsg = 0;
 
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
     ws.onmessage = ev => {
-      try { state = JSON.parse(ev.data); msgCount++; lastMsg = Date.now(); updateChips(); } catch (e) {}
+      try {
+        const m = JSON.parse(ev.data);
+        if (m.keys) { keys = m.keys; delete m.keys; }
+        state = m; msgCount++; lastMsg = Date.now(); updateChips();
+      } catch (e) {}
     };
     ws.onclose = () => { ws = null; setTimeout(connect, 300); };
     ws.onerror = () => { try { ws.close(); } catch (e) {} };
   }
+
+  // ---- keyboard binding editor ----------------------------------------------
+  function slotLabel(kind, idx) {
+    return kind === 0 ? ('格子 ' + idx) : kind === 1 ? ('AIR ' + (idx + 1)) : ('FN ' + (idx === 0 ? 'TEST' : 'SERVICE'));
+  }
+  function bindHint() {
+    const el = $('#bindHint');
+    if (!el) return;
+    el.textContent = bindTarget
+      ? ('按键目标：' + slotLabel(bindTarget.kind, bindTarget.idx) + '（再按一次取消）')
+      : '绑定中的格子：无';
+  }
+  function setBindTarget(t) {
+    bindTarget = t;
+    editing = !!t;
+    try {
+      if (t) localStorage.setItem(LS + '-bind', JSON.stringify(t));
+      else localStorage.removeItem(LS + '-bind');
+    } catch (e) {}
+    applyCfg(); bindHint(); buildBindList();
+  }
+  // Maps a KeyboardEvent to the token vocabulary shared with handviewer.ini.
+  function eventToken(e) {
+    if (e.key === ' ' || e.code === 'Space') return 'SPACE';
+    if (e.key === 'Enter') return 'ENTER';
+    if (e.key === 'Tab') return 'TAB';
+    if (e.key === 'Escape') return 'ESC';
+    if (e.key === 'Backspace') return 'BACKSPACE';
+    if (e.key === 'Shift') return 'SHIFT';
+    if (e.key === 'Control') return 'CTRL';
+    if (e.key === 'Alt') return 'ALT';
+    if (/^[A-Za-z0-9]$/.test(e.key)) return e.key.toUpperCase();
+    if (/^F([1-9]|1[0-9]|2[0-4])$/.test(e.key)) return e.key;
+    const named = { ArrowLeft: 'LEFT', ArrowRight: 'RIGHT', ArrowUp: 'UP', ArrowDown: 'DOWN',
+      ';': 'SEMI', ',': 'COMMA', '.': 'PERIOD', '/': 'SLASH', '[': 'LBRACKET', ']': 'RBRACKET',
+      '\\': 'BACKSLASH', '-': 'MINUS', '=': 'EQUALS', '`': 'TILDE' };
+    return named[e.key] || '';
+  }
+  async function bindKey(tok) {
+    if (!bindTarget || !tok) return false;
+    const kind = bindTarget.kind, idx = bindTarget.idx;
+    const slot = kind === 0 ? 'cell' + idx : kind === 1 ? 'air' + idx : 'fn' + idx;
+    try {
+      const r = await fetch('/bind?slot=' + slot + '&key=' + encodeURIComponent(tok), { cache: 'no-store' });
+      const j = await r.json();
+      return !!j.ok;
+    } catch (e) { return false; }
+  }
+  function bindListRow(kind, idx) {
+    const b = document.createElement('button');
+    b.className = 'bind';
+    b.dataset.kind = kind; b.dataset.idx = idx;
+    b.title = slotLabel(kind, idx);
+    return b;
+  }
+  function buildBindList() {
+    const host = $('#bindList'); if (!host) return;
+    host.innerHTML = '';
+    for (let i = 0; i < 32; i++) host.appendChild(bindListRow(0, i));
+    for (let i = 0; i < 6; i++) host.appendChild(bindListRow(1, i));
+    for (let i = 0; i < 2; i++) host.appendChild(bindListRow(2, i));
+    refreshBindList();
+  }
+  function refreshBindList() {
+    const host = $('#bindList'); if (!host) return;
+    const labels = keys.labels || {};
+    for (const b of host.children) {
+      const kind = +b.dataset.kind, idx = +b.dataset.idx;
+      const arr = kind === 0 ? labels.cells : kind === 1 ? labels.air : labels.fn;
+      const txt = (arr && arr[idx]) || '—';
+      if (b.textContent !== txt) b.textContent = txt;
+      b.classList.toggle('sel', !!bindTarget && bindTarget.kind === kind && bindTarget.idx === idx);
+      const down = kind === 0 ? (state.cells && state.cells[idx] >= cfg.thr)
+        : kind === 1 ? (state.air && state.air[idx]) : false;
+      b.classList.toggle('down', !!down);
+    }
+    bindHint();
+  }
+  $('#bindList').addEventListener('click', e => {
+    const b = e.target.closest('.bind'); if (!b) return;
+    const kind = +b.dataset.kind, idx = +b.dataset.idx;
+    setBindTarget(bindTarget && bindTarget.kind === kind && bindTarget.idx === idx ? null : { kind, idx });
+  });
+  $('#btnBind').onclick = () => {
+    // Enter edit mode: the next key press becomes a binding, so the lock icon
+    // stays hidden until the user explicitly leaves.
+    setBindTarget(null);
+    editing = true;
+    applyCfg();
+  };
+
 
   let lastSrcTxt = '';
   function updateChips() {
@@ -198,7 +303,7 @@
       if (c.sep) {
         const sepColor = colorFor(Math.max(0, base - 1), j);
         if (c.sep.dataset.c !== sepColor) {
-          c.sep.style.background = sepColor;
+          c.sep.style.setProperty('--color', sepColor);
           c.sep.dataset.c = sepColor;
         }
       }
@@ -209,18 +314,35 @@
         el.style.setProperty('--pp', (Math.min(1, v / 255) * 100).toFixed(1) + '%');
         el.classList.toggle('on', v >= cfg.thr);
         el.querySelector('.num').textContent = v;
+        const lbl = (keys.labels && keys.labels.cells && keys.labels.cells[i]) || '';
+        const k = el.querySelector('.key');
+        if (k.textContent !== lbl) k.textContent = lbl;
+        const sel = !!bindTarget && bindTarget.kind === 0 && bindTarget.idx === i;
+        el.classList.toggle('sel', sel);
+        el.dataset.cell = i;
       }
     }
     const hz = $('#hz'); if (hz) hz.textContent = got + ' Hz';
+    const kb = $('#kbChip');
+    if (kb) {
+      kb.textContent = state.kb ? '⌨ 按键' : '⌨ 待机';
+      kb.className = 'chip' + (state.kb ? ' ok' : ' ghost');
+    }
+    refreshBindList();
     document.body.classList.toggle('stale', lastMsg > 0 && Date.now() - lastMsg > 2000);
     requestAnimationFrame(render);
   }
   setInterval(() => { got = msgCount; msgCount = 0; }, 1000);
 
+  // Padding bits is a display option ("显示按键"), not an editor: it lets the
+  // key labels show on the cells so a rebind is visible at a glance.
+  let editing = !!bindTarget;
+
   function applyCfg() {
     document.querySelector('#root').className = 'theme-matte';
     document.body.classList.toggle('bg', cfg.bg);
     document.body.classList.toggle('shownum', cfg.num);
+    document.body.classList.toggle('editing', editing);
     $('#optThr').value = cfg.thr;
     $('#thrVal').textContent = cfg.thr;
     $('#optNum').checked = cfg.num;
@@ -235,7 +357,26 @@
   $('#optInv').onchange = e => { cfg.invert = e.target.checked; applyCfg(); };
   $('#optBg').onchange = e => { cfg.bg = e.target.checked; applyCfg(); };
   $('#gear').onclick = () => $('#panel').classList.toggle('open');
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#panel').classList.remove('open'); });
+
+  // Click a cell (when not binding) to make it the bind target.
+  body.addEventListener('click', e => {
+    const h = e.target.closest('.half'); if (!h || !h.dataset.cell) return;
+    if (!bindTarget) return;  // plain view: clicks must not arm the editor
+    const idx = +h.dataset.cell;
+    setBindTarget(bindTarget.kind === 0 && bindTarget.idx === idx ? null : { kind: 0, idx });
+  });
+  document.addEventListener('keydown', async e => {
+    if (e.key === 'Escape') {
+      if (bindTarget || editing) { setBindTarget(null); e.preventDefault(); }
+      else $('#panel').classList.remove('open');
+      return;
+    }
+    if (!bindTarget) return;
+    e.preventDefault();
+    const tok = eventToken(e);
+    if (!tok) return;
+    if (await bindKey(tok)) setBindTarget(null);
+  });
   $('#btnQuit').onclick = async () => {
     if (!confirm('确定关闭 viewer 程序？')) return;
     try { await fetch('/quit', { method: 'POST' }); } catch (e) {}
